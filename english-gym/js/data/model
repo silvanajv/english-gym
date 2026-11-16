@@ -1,0 +1,2 @@
+/* Modelo aprendido de los datos. Lo genera analysis/modelo_aprendizaje.py; mientras sea null, la app usa sus valores por defecto. */
+window.EG_MODEL = null;
