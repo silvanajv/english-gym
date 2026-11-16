@@ -1,14 +1,13 @@
 /*
- * English Gym · Lógica de la app: diccionario, corrector, modelo de errores, sesiones, vistas y eventos.
- * Carga después de los archivos en js/data/.
+ * English Gym · Lógica de la app: diccionario, corrector, modelo de errores, sesiones, datos de investigación, vistas y eventos.
+ * Carga después de js/config.js y de los archivos en js/data/.
  */
 /* ============================== DICTIONARY + SPELLING (no AI) ============================== */
 const DICT={st:"idle",rank:null,valid:null};
 function loadDict(){
   if(DICT.st!=="idle")return DICT.p;DICT.st="loading";
-  const get=f=>fetch("data/"+f).then(r=>{if(!r.ok)throw new Error("http "+f);return r.text()});
-  return DICT.p=Promise.all(["words-ranked.txt","words-valid-1.txt","words-valid-2.txt","words-valid-3.txt","words-valid-4.txt"].map(get)).then(parts=>{
-    const ranked=parts[0].split("\n"),rest=parts.slice(1).join("\n").split("\n");
+  return DICT.p=fetch("data/words.txt").then(r=>{if(!r.ok)throw new Error("http");return r.text()}).then(t=>{
+    const k=t.indexOf("\n#\n");const ranked=t.slice(0,k).split("\n"),rest=t.slice(k+3).split("\n");
     DICT.names=new Set();DICT.list=ranked.map(w=>{if(w.endsWith("*")){w=w.slice(0,-1);DICT.names.add(w)}return w});DICT.rank=new Map();DICT.list.forEach((w,i)=>DICT.rank.set(w,i+1));DICT.valid=new Set(rest);DICT.st="ready";
     ["lab","session"].forEach(c=>{if(document.getElementById("draft-"+c))refreshEditor(c)});
   }).catch(e=>{DICT.st="error";["lab","session"].forEach(c=>{const el=$("#score-"+c);if(el)refreshEditor(c)});throw e});
@@ -94,7 +93,7 @@ const CRIT_N={gram:"Gramática",spell:"Ortografía",vocab:"Vocabulario",coh:"Coh
 function scoreHTML(text,ex){
   const sc=scoreText(text,ex);
   const dictNote=DICT.st==="loading"?" · cargando diccionario…":DICT.st==="error"?" · diccionario no disponible":"";
-  if(!sc)return`<span class="eyebrow">Evaluación del texto${dictNote}</span><p class="muted" style="font-size:.88rem">Aparece cuando tengas al menos 15 palabras. Revisa ortografía con un diccionario de 280 mil palabras, la gramática con las reglas del corrector, la variedad de vocabulario, los conectores y si usas palabras del tema.</p>`;
+  if(!sc)return`<span class="eyebrow">Evaluación del texto${dictNote}</span><p class="muted" style="font-size:.88rem">Aparece cuando tengas al menos 15 palabras. Revisa ortografía con un diccionario de 84 mil palabras, la gramática con las reglas del corrector, la variedad de vocabulario, los conectores y si usas palabras del tema.</p>`;
   return`<div class="row" style="justify-content:space-between"><span class="eyebrow">Evaluación del texto${dictNote}</span><span class="chip acc">≈ ${sc.lvl} · ${sc.avg.toFixed(1)}/5</span></div>
   <div class="stack" style="gap:8px">${Object.entries(sc.crit).map(([k,c])=>`<div class="crit"><span class="cn">${CRIT_N[k]}</span><div class="hbar"><i style="width:${c.v*20}%;background:${c.v>=4?"var(--ok)":c.v>=3?"var(--plate-1)":"var(--bad)"}"></i></div><span class="mono" style="width:30px;text-align:right">${c.v}/5</span><span class="cd muted">${esc(c.d)}${c.sug&&c.v<4?` · Prueba: <i>${esc(c.sug.join(", "))}</i>`:""}</span></div>`).join("")}</div>
   <p class="muted" style="font-size:.8rem">Es una estimación por reglas y estadísticas de texto: detecta errores conocidos y patrones, no entiende el significado. Úsala para comparar tus textos entre sí.</p>`;
@@ -104,7 +103,7 @@ function scoreHTML(text,ex){
 const LS_KEY="english-gym-state-v1", LS_TEXTS="english-gym-texts-v1";
 const lsGet=k=>{try{return JSON.parse(localStorage.getItem(k)||"null")}catch(e){return null}};
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
-function fresh(){return{v:1,created:Date.now(),updated:0,placed:false,skill:50,startLevel:null,hist:[],xp:0,items:{},pats:{},days:[],sessions:[],ach:{},mistakes:[],custom:[],cands:[],stats:{fixOk:0,revOk:0,spoken:0},plan:null,lang:"auto",lastWrite:{},words:{},customWords:[],coach:{},wpat:{},pron:{},time:{},wotd:null,dict:[],spell:{}}}
+function fresh(){return{v:1,created:Date.now(),updated:0,placed:false,skill:50,startLevel:null,hist:[],xp:0,items:{},pats:{},days:[],sessions:[],ach:{},mistakes:[],custom:[],cands:[],stats:{fixOk:0,revOk:0,spoken:0},plan:null,lang:"auto",lastWrite:{},words:{},customWords:[],coach:{},wpat:{},pron:{},time:{},wotd:null,dict:[],spell:{},active:{},research:null,anon:null}}
 let state=Object.assign(fresh(),lsGet(LS_KEY)||{});
 let texts=lsGet(LS_TEXTS)||[];
 let view=state.placed?"home":"onboard";
@@ -175,7 +174,8 @@ async function initCloud(){
     render();
   }catch(e){cloud.status="local";cloud.col=null;renderSync()}
 }
-function renderSync(){const el=$("#sync");if(!el)return;el.textContent=cloud.status==="cloud"?"● guardado en tu cuenta":cloud.status==="connecting"?"conectando…":"● guardado en este navegador"}
+function renderFoot(){const el=$("#foot-extra");if(el)el.innerHTML=state.placed&&!sess&&!place?feedbackLink():""}
+function renderSync(){renderFoot();const el=$("#sync");if(!el)return;el.textContent=cloud.status==="cloud"?"● guardado en tu cuenta":cloud.status==="connecting"?"conectando…":"● guardado en este navegador"}
 
 /* ============================== LEARNING MODEL ============================== */
 function rec(id){return state.items[id]||(state.items[id]={box:0,due:null,n:0,ok:0,wrong:0,last:null,lastWrong:null,lastOk:null})}
@@ -199,14 +199,14 @@ function itemStatus(r){
   if(r.wrong>0)return{t:"Mejorado",cls:"acc"};
   return{t:"En progreso",cls:""};
 }
-function updSkill(l,ok){const exp=1/(1+Math.exp((DIFF[l]-state.skill)/10));state.skill=clamp(state.skill+5*((ok?1:0)-exp),5,98)}
+function updSkill(d,ok){const exp=1/(1+Math.exp((d-state.skill)/10));state.skill=clamp(state.skill+5*((ok?1:0)-exp),5,98)}
 function record(ex,ok,ansText,retry){
   const r=rec(ex.id),t=today(),now=Date.now(),wasReview=r.n>0&&r.wrong>0;
   r.n++;r.last=t;
   if(ok){r.ok++;r.box=Math.min(r.box+1,5);r.lastOk=now}else{r.wrong++;r.box=0;r.lastWrong=now}
   r.due=addDays(t,INTERVALS[r.box]);
   if(!retry){const s=pat(ex.p);s.n++;if(ok)s.ok++;s.h.push(ok?1:0);if(s.h.length>30)s.h=s.h.slice(-30)}
-  if(ex.t!=="write"&&!retry)updSkill(ex.l,ok);
+  if(ex.t!=="write"&&!retry)updSkill(exDiff(ex),ok);
   if(ex.wid)recordWord(ex,ok);
   if(ex.wid&&state.wotd&&state.wotd.id===ex.wid&&state.wotd.d===today())state.wotd.done=true;
   if(ok&&ex.t==="fix")state.stats.fixOk++;
@@ -225,11 +225,11 @@ function priorMistake(ex){
 }
 
 /* ============================== SESSION BUILDER ============================== */
-function tierW(l){return 0.12+Math.exp(-Math.pow((DIFF[l]-state.skill)/14,2))}
+function tierW(e){return 0.12+Math.exp(-Math.pow((exDiff(e)-state.skill)/14,2))}
 function patW(p){const a=patAcc(p);const st=patStatus(p).k;const w=state.wpat&&state.wpat[p];return 1+(w?Math.min(1,w.err/Math.max(1,w.texts)):0)+2*(1-(a==null?0.6:a))+(st==="recurring"?1.5:0)+(st==="new"?0.6:0)-(st==="mastered"?0.6:0)}
 function buildPlan(opts={}){
   const t=today(),picked=[],q=Object.assign({},QUOTA);
-  const pool=Object.values(EX).filter(e=>e.t!=="write"&&!e.wb);
+  const pool=Object.values(EX).filter(e=>e.t!=="write"&&!e.wb&&!exFlagged(e));
   const due=pool.filter(e=>{const r=state.items[e.id];return r&&r.n&&r.due&&r.due<=t}).sort((a,b)=>(state.items[a.id].box-state.items[b.id].box)||(state.items[a.id].due<state.items[b.id].due?-1:1));
   if(opts.reviewOnly){return{d:t,items:due.slice(0,8).map(e=>e.id).concat(pickWords(4,0)),write:null,review:true,done:false}}
   if(opts.words){return{d:t,items:pickWords(10,6),write:null,review:true,done:false,words:true}}
@@ -242,7 +242,7 @@ function buildPlan(opts={}){
       let best=null,bs=-1;
       for(const e of cands){const r=state.items[e.id];
         let fam=!r||!r.n?1.35:(r.box>=4?0.2:(r.due&&r.due>t?0.45:0.9));
-        const sc=tierW(e.l)*patW(e.p)*fam*(1/(1+(usedCats[e.c]||0)*0.6))*(0.6+Math.random()*0.8);
+        const sc=tierW(e)*patW(e.p)*fam*(1/(1+(usedCats[e.c]||0)*0.6))*(0.6+Math.random()*0.8);
         if(sc>bs){bs=sc;best=e}}
       picked.push(best.id);usedCats[best.c]=(usedCats[best.c]||0)+1;q[type]--;
     }
@@ -254,7 +254,7 @@ function buildPlan(opts={}){
   const wsel=pickWords(2,3,wotd().id).map(id=>EX[id]).filter(Boolean);
   if(wsel[0])ord.splice(Math.min(2,ord.length),0,wsel[0]);if(wsel[1])ord.splice(Math.min(8,ord.length),0,wsel[1]);
   const writes=Object.values(EX).filter(e=>e.t==="write");
-  const w=writes.map(e=>({e,s:tierW(e.l)*(state.lastWrite[e.id]?0.5:1.2)*(0.5+Math.random())})).sort((a,b)=>b.s-a.s)[0].e;
+  const w=writes.map(e=>({e,s:tierW(e)*(state.lastWrite[e.id]?0.5:1.2)*(0.5+Math.random())})).sort((a,b)=>b.s-a.s)[0].e;
   const wid=wotd().id;return{d:t,items:[wotdExId()].concat(ord.map(e=>e.id)),write:w.id,review:false,done:false,dueCount:Math.min(due.length,4),wotd:wid};
 }
 function todayPlan(){if(!state.plan||state.plan.d!==today()||!state.plan.items.every(id=>EX[id])||(!state.plan.done&&state.plan.wotd!==wotd().id)){state.plan=buildPlan();save()}return state.plan}
@@ -285,7 +285,7 @@ function render(){
   renderNav();renderSync();
   const app=$("#app");
   const v=place?"placement":repsUI?"reps":wbUI?"wbreps":sess?(sess.done?"summary":"session"):view;
-  app.innerHTML=({onboard:vOnboard,placement:vPlacement,home:vHome,session:vSession,summary:vSummary,review:vReview,lab:vLab,progress:vProgress,words:vWords,reps:vReps,wbreps:vWbReps}[v]||vHome)();
+  app.innerHTML=({onboard:vOnboard,placement:vPlacement,home:vHome,session:vSession,summary:vSummary,review:vReview,lab:vLab,progress:vProgress,words:vWords,reps:vReps,wbreps:vWbReps,research:vResearch,feedback:vFeedback}[v]||vHome)();
   const f=app.querySelector("[data-autofocus]");if(f&&!f.disabled){f.focus({preventScroll:true});if(f.setSelectionRange&&f.value)f.setSelectionRange(f.value.length,f.value.length)}
 }
 
@@ -344,17 +344,9 @@ function vHome(){
   const cats=[...new Set(plan.items.map(id=>EX[id].c))];
   const trainedMonth=state.days.filter(d=>d.slice(0,7)===t.slice(0,7)).length;
   const days14=[...Array(14)].map((_,k)=>addDays(t,k-13));
-  const wd=wotdWord(),wo=wotd(),secs=todaySecs(),mins=Math.floor(secs/60),goal=secs>=GOAL;
-  const steps=[
-    {on:wo.done,tx:`Palabra del día: <i>${esc(wd.w)}</i>`,sub:"Primer set del entrenamiento"},
-    {on:plan.done,tx:"Entrenamiento del día",sub:plan.done?"Completado":(plan.doneIds&&plan.doneIds.length?`${plan.doneIds.length} de ${plan.items.length} ejercicios + escritura`:`${plan.items.length+1} sets · ejercicios + escritura`)},
-    {on:goal,tx:"20 minutos de estudio",sub:goal?"Cumplido":`Llevas ${mins} min · faltan ${Math.max(1,Math.ceil((GOAL-secs)/60))}`}
-  ];
-  const nextI=steps.findIndex(x=>!x.on);
-  const status=nextI<0?"Todo listo por hoy. Lo que hagas de aquí en adelante es extra."
-    :nextI===2?"Ya hiciste el entrenamiento. Completa los 20 minutos con un repaso, el Word Bank o el Writing Lab."
-    :"Tu siguiente paso está marcado en azul.";
+  const wd=wotdWord(),wo=wotd();
   return`<section class="stack" style="padding-top:18px">
+  ${consentCardHTML()}
   <div class="hero stack">
     <div class="row" style="justify-content:space-between;align-items:flex-start">
       <h1>${plan.done?"Done for today":"Today's workout"}</h1>
@@ -397,7 +389,7 @@ function vHome(){
     </div>
     <div class="card stack" style="gap:10px"><span class="eyebrow">Repaso espaciado</span>
       <div class="stat"><span class="n mono">${nDue}</span> <span class="muted">${nDue===1?"concepto toca hoy":"conceptos tocan hoy"}</span></div>
-      <p class="muted" style="font-size:.9rem">Lo que fallas regresa en 1, 2, 4, 8, 16 y 32 días según lo vayas acertando.</p>
+      <p class="muted" style="font-size:.9rem">Lo que fallas regresa en ${INTERVALS.slice(0,-1).join(", ")} y ${INTERVALS[INTERVALS.length-1]} días según lo vayas acertando.</p>
       <div class="row"><button class="btn sm" data-act="start-review" ${nDue?"":"disabled"}>Repaso rápido</button><button class="btn ghost sm" data-act="go" data-v="lab">Abrir Writing Lab</button></div>
     </div>
   </div>
@@ -408,7 +400,7 @@ function vHome(){
 function startSession(plan){
   let items=plan.items.slice();
   if(plan===state.plan&&!plan.done&&plan.doneIds&&plan.doneIds.length){const rest=items.filter(id=>!plan.doneIds.includes(id));if(rest.length)items=rest}
-  sess={plan,items,write:plan.write,i:0,intro:(!plan.review&&!(state.wotd&&state.wotd.done&&state.wotd.d===today())&&plan.wotd&&EX[items[0]]&&EX[items[0]].wid===plan.wotd)?plan.wotd:null,secs:0,results:[],start:Date.now(),xp:0,skill0:state.skill,fb:null,orders:{},tiles:null,draft:"",writeDone:false,ai:null,done:false,lv0:cefr(state.skill),pats0:JSON.parse(JSON.stringify(state.pats))};
+  sess={plan,items,write:plan.write,i:0,intro:(!plan.review&&!(state.wotd&&state.wotd.done&&state.wotd.d===today())&&plan.wotd&&EX[items[0]]&&EX[items[0]].wid===plan.wotd)?plan.wotd:null,secs:0,active:0,sid:Math.random().toString(36).slice(2,10),shownAt:Date.now(),hintUsed:false,results:[],start:Date.now(),xp:0,skill0:state.skill,fb:null,orders:{},tiles:null,draft:"",writeDone:false,ai:null,done:false,lv0:cefr(state.skill),pats0:JSON.parse(JSON.stringify(state.pats))};
   items.forEach(id=>{const e=EX[id];if(e.o)sess.orders[id]=shuffle(e.o.map((_,k)=>k))});
   render();window.scrollTo({top:0});
 }
@@ -506,7 +498,13 @@ function wFeedback(ex,fb){
 function settle(ex,ok,ans,extra={}){
   const reminder=!ok?priorMistake(ex):null;
   const retry=sess.items.indexOf(ex.id)<sess.i;
+  const r0=state.items[ex.id],skill0=state.skill;
+  const pre={box_before:r0?r0.box:0,n_before:r0?r0.n:0,wrong_before:r0?r0.wrong:0,days_since:r0&&r0.last?daysBetween(r0.last,today()):""};
   const wasReview=record(ex,ok,ans,retry);
+  track("attempt",Object.assign({sid:sess.sid,kind:sess.plan.review?(sess.plan.words?"words":"review"):"daily",pos:sess.i,ex:ex.id,cat:ex.c,type:ex.t,tier:ex.l,pattern:ex.p,
+    word_bank:!!ex.wb,wotd:!!(ex.wid&&ex.wid===sess.plan.wotd),ok,retry,dont_know:!!extra.dk,assist:!!extra.assist,choices_shown:!!sess.usedChoices,hint:!!sess.hintUsed,
+    err_kind:ok?"":(extra.kind||ex.k||"g"),ms:Date.now()-(sess.shownAt||Date.now()),diff:+exDiff(ex).toFixed(1),skill_before:+skill0.toFixed(2),skill_after:+state.skill.toFixed(2),
+    hour:new Date().getHours(),weekday:new Date().getDay(),timer_running:timer.running},pre));
   const xp=ok?(retry?2:extra.assist?3+ex.l:6+4*ex.l):1;state.xp+=xp;sess.xp+=xp;
   sess.results[sess.i]={id:ex.id,ok,review:wasReview,retry};
   if(!ok)sess.items.push(ex.id);
@@ -527,7 +525,7 @@ function checkFree(){
   sess.fb={pending:true,ans};render();
 }
 function nextItem(){
-  sess.fb=null;sess.tiles=null;sess.choice=false;sess.chOrd=null;
+  sess.fb=null;sess.tiles=null;sess.choice=false;sess.chOrd=null;sess.hintUsed=false;sess.usedChoices=false;sess.shownAt=Date.now();
   if(sess.i<sess.items.length)sess.i++;
   const nid=sess.items[sess.i];
   if(nid&&sess.items.indexOf(nid)<sess.i){const e=EX[nid];if(e&&e.o)sess.orders[nid]=shuffle(e.o.map((_,k)=>k))}
@@ -578,6 +576,9 @@ function saveTextEntry(ex,body){
   Object.keys(PATS).forEach(p=>{const w=state.wpat[p]||(state.wpat[p]={err:0,texts:0});w.texts++});
   t.coach=analyzeText(body,{formal:ex.p==="register"}).issues.length;
   const sc=scoreText(body,ex);if(sc){t.score={avg:+sc.avg.toFixed(2),lvl:sc.lvl,c:Object.fromEntries(Object.entries(sc.crit).map(([k,v])=>[k,v.v]))}}
+  {const c=(t.score&&t.score.c)||{};track("writing",{prompt:ex.id,where:st===labUI?"lab":"session",words,sentences:t.metrics.sents,avg_sentence:t.metrics.avg,variety:t.metrics.variety,connectors:t.metrics.conns.length,
+    mode:t.mode,dict_words:t.dictWords,coach_issues:t.coach,spell_errors:DICT.st==="ready"?spellIssues(body).length:"",score_avg:t.score?t.score.avg:"",score_lvl:t.score?t.score.lvl:"",
+    grammar:c.gram||"",spelling:c.spell||"",vocabulary:c.vocab||"",coherence:c.coh||"",topic:c.topic||"",length:c.len||"",wotd_used:wordRegex(wotdWord()).test(body),bank_words:t.usedWords.length,skill:+state.skill.toFixed(1)})}
   texts.unshift(t);saveTexts();cloudText(t);state.lastWrite[ex.id]=today();
   return t;
 }
@@ -587,10 +588,14 @@ function finishSession(){
   const first=sess.results.filter(r=>r&&!r.retry),n=first.length,ok=first.filter(r=>r.ok).length;
   if(n||sess.writeSaved){
     if(!state.days.includes(t))state.days.push(t);
-    state.sessions.push({d:t,n,ok,xp:sess.xp,dur:Math.round((sess.secs||0)/60),skill:Math.round(state.skill*10)/10,review:!!sess.plan.review});
+    state.sessions.push({d:t,n,ok,xp:sess.xp,dur:Math.round((sess.secs||0)/60),active:Math.round((sess.active||0)/60),skill:Math.round(state.skill*10)/10,review:!!sess.plan.review});
     if(state.sessions.length>300)state.sessions=state.sessions.slice(-300);
     state.hist.push({d:t,s:Math.round(state.skill*10)/10});if(state.hist.length>400)state.hist=state.hist.slice(-400);
     if(!sess.plan.review&&sess.plan===state.plan&&sess.plan.items.every(id=>(state.plan.doneIds||[]).includes(id)))state.plan.done=true;
+    track("session",{sid:sess.sid,kind:sess.plan.review?(sess.plan.words?"words":"review"):"daily",n_first:n,ok_first:ok,retries:sess.results.filter(r=>r&&r.retry).length,
+      items:sess.items.length,xp:sess.xp,timer_secs:sess.secs||0,active_secs:sess.active||0,wall_secs:Math.round((Date.now()-sess.start)/1000),
+      skill_start:+sess.skill0.toFixed(2),skill_end:+state.skill.toFixed(2),cefr:cefr(state.skill),plan_done:!!(state.plan&&state.plan.done&&sess.plan===state.plan),write_saved:!!sess.writeSaved,completed:sess.i>=sess.items.length});
+    trackDaily();flushResearch();
   }
   sess.newAch=checkAch({sessAcc:n?ok/n:0,n});
   save();
@@ -617,9 +622,9 @@ function vSummary(){
   const patsTouched=[...new Set(res.map(r=>EX[r.id].p))];
   const wrong=res.filter(r=>!r.ok).map(r=>EX[r.id]);
   const improved=patsTouched.filter(p=>{const st=patStatus(p).k;return st==="improving"||st==="mastered"});
-  const mins=Math.max(1,Math.round((sess.secs||0)/60)),todayM=Math.floor(todaySecs()/60);
+  const tsec=sess.secs||0;
   return`<section class="stack" style="padding-top:16px">
-  <span class="eyebrow">${sess.plan.review?"Repaso completado":"Sesión completada"} · ${mins} min · hoy llevas ${todayM} de 20 min${todayM>=20?" ✓":""}</span>
+  <span class="eyebrow">${sess.plan.review?"Repaso completado":"Sesión completada"}${tsec?` · ${mmss(tsec)} en el cronómetro`:""} · hoy: ${mmss(todaySecs())}</span>
   <h1>${acc>=85?"Strong session":acc>=60?"Solid work":"Good reps"}</h1>
   ${barbell(sess.items,sess.writeSaved?sess.write:null,{live:true,results:sess.results.concat(sess.writeSaved?[{ok:true}]:[]),cur:-1})}
   <div class="grid3">
@@ -738,6 +743,7 @@ function vProgress(){
   <div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
     <div class="card stat"><span class="eyebrow">Sesiones</span><div class="n mono">${S.length}</div></div>
     <div class="card stat"><span class="eyebrow">Días entrenados</span><div class="n mono">${state.days.length}</div></div>
+    <div class="card stat"><span class="eyebrow">Racha actual</span><div class="n mono">${streaks().cur}</div><span class="muted" style="font-size:.8rem">mejor: ${streaks().best} días</span></div>
     <div class="card stat"><span class="eyebrow">Precisión total</span><div class="n mono">${tot?Math.round(ok/tot*100):0}%</div></div>
     <div class="card stat"><span class="eyebrow">Minutos de estudio</span><div class="n mono">${mins}</div></div>
     <div class="card stat"><span class="eyebrow">Patrones dominados</span><div class="n mono">${mastered}</div></div>
@@ -751,14 +757,17 @@ function vProgress(){
   ${S.length?`<div class="card stack" style="gap:6px"><span class="eyebrow">Historial</span><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Ejercicios</th><th>Precisión</th><th>XP</th><th>Nivel</th></tr></thead><tbody>
   ${S.slice(-12).reverse().map(s=>`<tr><td>${prettyD(s.d)}</td><td>${s.review?"Repaso":"Sesión"}</td><td class="num">${s.n}</td><td class="num">${s.n?Math.round(s.ok/s.n*100):0}%</td><td class="num">${s.xp}</td><td>${cefr(s.skill)}</td></tr>`).join("")}</tbody></table></div></div>`:""}
   <div class="card stack" style="gap:10px"><span class="eyebrow">Ajustes</span>
+    ${researchAvailable()?`<span class="eyebrow">Datos para investigación</span>
+    <p style="font-size:.93rem">${researchOn()?"Participas compartiendo datos anónimos de práctica. Gracias.":"No estás compartiendo datos. Si participas, nos ayudas a entrenar un mejor modelo de repaso."}</p>
+    <div class="row"><button class="btn sm" data-act="go" data-v="research">${researchOn()?"Ver mis datos y opciones":"Ver detalles y participar"}</button>${feedbackLink()}</div>`:""}
     <label for="lang-set">Idioma de las instrucciones</label>
     <select id="lang-set" style="max-width:360px"><option value="auto" ${state.lang==="auto"?"selected":""}>Automático (más inglés desde C1)</option><option value="es" ${state.lang==="es"?"selected":""}>Español</option><option value="en" ${state.lang==="en"?"selected":""}>English</option></select>
     <p class="muted" style="font-size:.85rem">Las explicaciones siguen en español para que el razonamiento quede claro.</p>
     <span class="eyebrow" style="margin-top:6px">Copia de seguridad</span>
     <p class="muted" style="font-size:.85rem">Tu progreso vive en este navegador. Copia el respaldo para pasarlo a otro dispositivo o guardarlo; pégalo abajo para restaurarlo.</p>
     <div class="row"><button class="btn sm" data-act="backup-copy">Copiar respaldo</button></div>
-    <textarea id="bk-out" rows="3" readonly hidden style="font-family:var(--f-mono);font-size:.75rem"></textarea>
-    <textarea id="bk-in" rows="2" placeholder="Pega aquí un respaldo para restaurarlo" style="font-family:var(--f-mono);font-size:.75rem"></textarea>
+    <textarea id="bk-out" rows="3" readonly hidden style="font-family:var(--f-mono);font-size:16px"></textarea>
+    <textarea id="bk-in" rows="2" placeholder="Pega aquí un respaldo para restaurarlo" style="font-family:var(--f-mono);font-size:16px"></textarea>
     <div class="row"><button class="btn sm" data-act="backup-import">Restaurar respaldo</button></div>
     <div class="row"><button class="btn sm" data-act="redo-placement">Repetir evaluación inicial</button>
     ${reviewUI.confirmReset?"":`<button class="btn ghost sm" data-act="reset" style="color:var(--bad)">Borrar todo el progreso</button>`}</div>
@@ -839,7 +848,7 @@ RULE("a-uncount",/\ba (research|information|advice|feedback|homework|furniture|e
 RULE("uncount-pl",/\b(informations|advices|feedbacks|homeworks|furnitures|equipments|knowledges|researches)\b/gi,"prep","g",.9,"Sustantivo incontable: no lleva -s.",m=>kc(m[1],UNC[lo(m[1])])),
 RULE("people-is",/\bpeople (is|was|has)\b/gi,"sva","g",.9,"People es plural: people are / were / have.",m=>kc(m[0],"people "+({is:"are",was:"were",has:"have"}[lo(m[1])]))),
 RULE("everyone-have",/\b(everyone|everybody|nobody|someone|somebody) (have|are|were|don't|do)\b/gi,"sva","g",.85,"Everyone, nobody, someone… son gramaticalmente singulares.",m=>m[1]+" "+({have:"has",are:"is",were:"was","don't":"doesn't",do:"does"}[lo(m[2])])),
-RULE("he-have",/(?<!\b(?:does|did|do|will|would|can|could|should|might|must|may|to|let|make|makes|help|helps|not|that)\s)\b(he|she|it) (have|don't)\b/gi,"sva","g",.8,"Con he / she / it: has, doesn't.",m=>m[1]+" "+({have:"has","don't":"doesn't"}[lo(m[2])])),
+RULE("he-have",/(\b[A-Za-z']+\s)?\b(he|she|it) (have|don't)\b/gi,"sva","g",.8,"Con he / she / it: has, doesn't.",m=>m[2]+" "+({have:"has","don't":"doesn't"}[lo(m[3])]),{lead:true,skip:m=>/^(does|did|do|will|would|can|could|should|might|must|may|to|let|make|makes|help|helps|not|that)\s$/i.test(m[1]||"")}),
 RULE("number-of",/\bthe number of (\w+) (have|are|were)\b/gi,"sva","g",.85,"“The number of…” es singular.",m=>kc(m[0],"the number of "+m[1]+" "+({have:"has",are:"is",were:"was"}[lo(m[2])]))),
 RULE("age",/\b(I|you|he|she|we|they) (have|has) (\d{1,2}|seventeen|eighteen|nineteen|twenty[- ]?\w*|thirty[- ]?\w*) years\b(?! of\b)(?!\s+(?:studying|working|living|learning|doing))/gi,"literal","g",.9,"La edad se dice con be: I am 25 (years old).",m=>m[1]+" "+({i:"am",you:"are",he:"is",she:"is",we:"are",they:"are"}[lo(m[1])])+" "+m[3]+" years old"),
 RULE("years-ing",/\b(I|we|they|you) (have|has) (\d+|two|three|four|five|six|seven|eight|nine|ten|many|several) (years|months|weeks) (studying|working|living|learning|doing|playing)\b/gi,"literal","g",.9,"“Tengo X años estudiando” → have been + -ing + for.",m=>m[1]+" have been "+m[5]+" for "+m[3]+" "+m[4]),
@@ -915,7 +924,7 @@ function ruleStat(id){return state.coach[id]||(state.coach[id]={a:0,i:0})}
 function ruleConf(r){const s=state.coach[r.id]||{a:0,i:0};return(s.a+4*r.p0)/(s.a+s.i+4)}
 function ruleMuted(r){const s=state.coach[r.id];return s&&s.i>=3&&ruleConf(r)<0.3}
 function patErrP(p){const s=state.pats[p]||{n:0,ok:0},w=state.wpat[p]||{err:0,texts:0};
-  return(s.n-s.ok+Math.min(w.err,w.texts*2)+0.6)/(s.n+w.texts+4)}
+  return(s.n-s.ok+Math.min(w.err,w.texts*2)+4*patPrior(p))/(s.n+w.texts+4)}
 function patObs(p){const s=state.pats[p]||{n:0},w=state.wpat[p]||{texts:0};return s.n+w.texts}
 function analyzeText(text,{formal=false,ign=null}={}){
   const sents=splitSents(text),issues=[];
@@ -928,7 +937,8 @@ function analyzeText(text,{formal=false,ign=null}={}){
     r.re.lastIndex=0;let m;
     while((m=r.re.exec(text))){
       let start=m.index,end=m.index+m[0].length,fix=r.fix?r.fix(m):null;
-      if(r.id==="lower-i"||r.id==="start-and"){start+=m[1].length}
+      if(r.skip&&r.skip(m)){if(m[0].length===0)r.re.lastIndex++;continue}
+      if(r.id==="lower-i"||r.id==="start-and"||r.lead){start+=(m[1]||"").length}
       if(r.id==="lower-i")fix="I";
       if(r.id==="start-and")end=start+m[2].length;
       push(r.id,start,end,fix,r.msg,r.kind,r.pat,ruleConf(r));
@@ -1001,6 +1011,7 @@ function setDraft(ctx,v){if(ctx==="lab"){labUI.draft=v;try{sessionStorage.setIte
 function getDraft(ctx){return ctx==="lab"?labUI.draft:(sess?sess.draft:"")}
 function coachAct(ctx,i,apply){
   const it=(coachCache[ctx]||[])[i];if(!it)return;
+  track("coach",{rule:it.rule,kind:it.kind,pattern:it.pat,action:apply?"apply":(it.rule==="spell"?"mark_correct":"ignore"),conf:+it.conf.toFixed(2),where:ctx});
   const st=ruleStat(it.rule);
   if(apply){st.a++;const w=state.wpat[it.pat]||(state.wpat[it.pat]={err:0,texts:0});w.err++;
     if(it.fix!=null){const t=getDraft(ctx);setDraft(ctx,t.slice(0,it.start)+it.fix+t.slice(it.end))}else{(coachIgn[ctx]||(coachIgn[ctx]=new Set())).add(it.key)}}
@@ -1142,7 +1153,7 @@ function vWords(){
     ${hw.length?`<div><span class="lbl eyebrow">Palabras que el dictado suele no reconocerte</span><div class="row" style="gap:6px;margin-top:6px">${hw.map(([w,p])=>`<span class="chip bad">${esc(w)} · ${p.miss}/${p.n}</span>`).join("")}</div></div>`:`<p class="muted" style="font-size:.85rem">Aquí aparecerán las palabras que más te cuesta que el dictado reconozca.</p>`}
   </div>
   <div class="row" style="gap:6px">${[["all","Todas"]].concat(Object.entries(WCATS).map(([k,v])=>[k,v.n])).map(([k,n])=>`<button class="btn sm ${wordsUI.cat===k?"primary":""}" data-act="wcat" data-c="${k}">${esc(n)}</button>`).join("")}
-  <input type="text" id="wsearch" placeholder="Buscar…" value="${esc(wordsUI.q)}" style="flex:1 1 160px;width:auto;min-height:34px;padding:6px 10px;font-size:.92rem"></div>
+  <input type="text" id="wsearch" placeholder="Buscar…" value="${esc(wordsUI.q)}" style="flex:1 1 160px;width:auto;min-height:34px;padding:6px 10px;font-size:16px"></div>
   ${wordsUI.cat!=="all"?`<p class="muted" style="font-size:.9rem">${esc(WCATS[wordsUI.cat].d)}</p>`:""}
   <div class="wgrid">${list.map(wordCard).join("")||`<p class="muted">No hay palabras con ese filtro.</p>`}</div>
   <div class="card stack" style="gap:10px"><span class="eyebrow">Agregar una palabra</span>
@@ -1185,28 +1196,35 @@ function addWord(){
 }
 
 /* ============================== STUDY TIMER ============================== */
-const GOAL=1200,IDLE=180000;let lastAct=Date.now(),tickN=0;
+/* Cronómetro manual: solo corre cuando el usuario lo inicia; se puede pausar; sin meta ni máximo.
+   Por separado se mide el tiempo activo en la app (para los datos de investigación, si el usuario los comparte). */
+const IDLE_PAUSE=600000;let lastAct=Date.now(),tickN=0;
+const timer={running:false,idlePaused:false};
 ["pointerdown","keydown","input","scroll","touchstart","wheel"].forEach(e=>document.addEventListener(e,()=>{lastAct=Date.now()},{passive:true,capture:true}));
 function todaySecs(){return(state.time&&state.time[today()])||0}
-function studying(){return state.placed&&!place&&document.visibilityState==="visible"&&(Date.now()-lastAct<IDLE||(typeof dictCtl!=="undefined"&&dictCtl.state!=="idle"))}
-function mmss(x){x=Math.floor(x);return pad(Math.floor(x/60))+":"+pad(x%60)}
-function paintTimer(active){
+function activeNow(){return state.placed&&!place&&document.visibilityState==="visible"&&(Date.now()-lastAct<180000||(typeof dictCtl!=="undefined"&&dictCtl.state!=="idle"))}
+function mmss(x){x=Math.floor(x);const h=Math.floor(x/3600),m=Math.floor(x/60)%60;return(h?h+":"+pad(m):pad(m))+":"+pad(x%60)}
+const ICO_PLAY='<path d="M3 1.5v11l9-5.5z" fill="currentColor"/>',ICO_PAUSE='<rect x="2.5" y="1.5" width="3.2" height="11" rx="1" fill="currentColor"/><rect x="8.3" y="1.5" width="3.2" height="11" rx="1" fill="currentColor"/>';
+function paintTimer(){
   const el=$("#tmr");if(!el)return;el.hidden=!state.placed;
-  const sec=todaySecs(),f=Math.min(1,sec/GOAL);
-  $("#tmr-t").textContent=mmss(sec);$("#tmr-g").textContent=sec>=GOAL?"meta ✓":"/ 20 min";
-  $("#tmr-ring").setAttribute("stroke-dashoffset",(62.83*(1-f)).toFixed(2));
-  el.classList.toggle("paused",!active);el.classList.toggle("goal",sec>=GOAL);
-  el.title=active?"Tiempo de estudio de hoy (contando)":"En pausa: se reanuda cuando vuelves a interactuar";
-  const dr=$("#dayring-t");if(dr){dr.textContent=Math.floor(sec/60);const rg=$("#dayring-fg");if(rg)rg.setAttribute("stroke-dashoffset",(276.5*(1-f)).toFixed(1))}
+  $("#tmr-t").textContent=mmss(todaySecs());
+  $("#tmr-g").textContent=timer.running?"en marcha":timer.idlePaused?"pausado por inactividad":todaySecs()?"en pausa":"Cronómetro";
+  $("#tmr-ico").innerHTML=timer.running?ICO_PAUSE:ICO_PLAY;
+  $("#tmr-btn").setAttribute("aria-label",timer.running?"Pausar cronómetro":"Iniciar cronómetro");
+  el.classList.toggle("running",timer.running);el.classList.toggle("idle-paused",timer.idlePaused);
+  el.title="Tiempo que has estudiado hoy. Tú decides cuándo empieza y cuándo se pausa. Se reinicia cada día.";
 }
+function toggleTimer(){timer.running=!timer.running;timer.idlePaused=false;lastAct=Date.now();if(typeof track==="function")track("timer",{action:timer.running?"start":"pause",secs_today:todaySecs()});paintTimer();save()}
 setInterval(()=>{
-  const on=studying();
-  if(on){const d=today();state.time=state.time||{};const before=state.time[d]||0;state.time[d]=before+1;
-    if(sess&&!sess.done)sess.secs=(sess.secs||0)+1;
-    if(before<GOAL&&before+1>=GOAL){toast("Meta de 20 minutos cumplida");if(view==="home"&&!sess&&!place)render()}
-    if(++tickN%15===0){state.updated=Date.now();lsSet(LS_KEY,state)}
-    if(tickN%120===0)save()}
-  paintTimer(on);
+  const d=today();state.time=state.time||{};state.active=state.active||{};
+  if(timer.running){
+    if(Date.now()-lastAct>IDLE_PAUSE&&!(dictCtl&&dictCtl.state!=="idle")){timer.running=false;timer.idlePaused=true;toast("Cronómetro en pausa: 10 minutos sin actividad")}
+    else{state.time[d]=(state.time[d]||0)+1;if(sess&&!sess.done)sess.secs=(sess.secs||0)+1}
+  }
+  if(activeNow()){state.active[d]=(state.active[d]||0)+1;if(sess&&!sess.done)sess.active=(sess.active||0)+1}
+  if(++tickN%15===0){state.updated=Date.now();lsSet(LS_KEY,state)}
+  if(tickN%120===0)save();
+  paintTimer();
 },1000);
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden"&&state.placed){save()}});
 
@@ -1259,7 +1277,7 @@ function charDiff(target,typed){
 }
 function repsCheck(){
   const R=repsUI,w=R.q[R.i],el=$("#rep-in"),typed=(el?el.value:"").trim();if(!typed)return;
-  const r=state.spell[w];r.n++;
+  const r=state.spell[w];r.n++;track("spellrep",{word:w,ok:lo(typed)===w,streak_before:R.streak,box:r.box});
   if(lo(typed)===w){r.ok++;R.streak++;R.last={ok:true};
     if(R.streak>=REPS_NEEDED){r.box=Math.min(r.box+1,5);r.due=addDays(today(),INTERVALS[r.box]);R.done.push(w);R.phase="next"}
     else R.phase="write";
@@ -1303,7 +1321,7 @@ function spellCardHTML(){
   return`<div class="card stack" style="gap:10px"><div class="row" style="justify-content:space-between"><span class="eyebrow">Reps de ortografía</span><button class="btn ${due?"primary":""} sm" data-act="reps-start" ${due?"":"disabled"}>Hacer reps${due?" · "+due:""}</button></div>
   <p style="font-size:.93rem">Las palabras que escribes mal en el Writing Lab llegan aquí automáticamente. La ves, se oculta y la escribes ${REPS_NEEDED} veces seguidas sin errores. Si fallas, vuelve al final.</p>
   ${all.length?`<div class="row" style="gap:6px">${all.map(r=>{const st=spellStatus(r);return`<span class="chip ${st.cls}" title="${esc(st.t)}${r.wrong.length?" · escribiste: "+r.wrong.join(", "):""}">${esc(r.w)}</span>`}).join("")}</div>`:`<p class="muted" style="font-size:.88rem">Aún no hay palabras. Aparecen cuando el corrector detecta errores de ortografía en tus textos.</p>`}
-  <form data-form="spell-add" class="row"><input type="text" id="sp-add" placeholder="Agregar una palabra que te cuesta escribir (ej. necessary)" autocomplete="off" spellcheck="false" style="flex:1 1 220px;width:auto;min-height:38px;padding:6px 10px;font-size:.95rem"><button class="btn sm" type="submit">Agregar</button></form></div>`;
+  <form data-form="spell-add" class="row"><input type="text" id="sp-add" placeholder="Agregar una palabra que te cuesta escribir (ej. necessary)" autocomplete="off" spellcheck="false" style="flex:1 1 220px;width:auto;min-height:38px;padding:6px 10px;font-size:16px"><button class="btn sm" type="submit">Agregar</button></form></div>`;
 }
 
 /* ============================== ENDLESS WORDS (Free Dictionary API) ============================== */
@@ -1411,6 +1429,7 @@ function wbCheck(){
     if(close)addSpellRep(typed,target,"word bank");
     const r=wordRec(id);r.box=0;r.due=today();
     wbUI.last={ok:false,wd,typed,close}}
+  track("wordrep",{word:id,cat:wd.cat,ok:wbUI.last.ok,close_spelling:!!wbUI.last.close,attempts_today:state.wbRec[id].n});
   wbUI.phase="fb";state.xp+=wbUI.last.ok?2:0;save();render();
 }
 function vWbReps(){
@@ -1475,6 +1494,169 @@ function importBackup(txt){
   texts.forEach(t=>cloudText(t));return"";
 }
 
+/* ============================== LEARNING MODEL (from data) ==============================
+   js/data/model.js (generado por analysis/modelo_aprendizaje.py) puede definir window.EG_MODEL con:
+   intervals (días de repaso por nivel), itemDiff (dificultad calibrada por ejercicio),
+   flagged (ejercicios a revisar) y patternPrior (tasa base de error por patrón). */
+const MODEL=(typeof window!=="undefined"&&window.EG_MODEL&&typeof window.EG_MODEL==="object")?window.EG_MODEL:null;
+(function applyModel(){
+  if(!MODEL)return;
+  const iv=MODEL.intervals;
+  if(Array.isArray(iv)&&iv.length===INTERVALS.length&&iv.every((x,i)=>Number.isFinite(x)&&x>=1&&x<=120&&(i===0||x>=iv[i-1])))INTERVALS.splice(0,INTERVALS.length,...iv.map(Math.round));
+})();
+function exDiff(ex){const d=MODEL&&MODEL.itemDiff&&MODEL.itemDiff[ex.id];return Number.isFinite(d)?clamp(d,25,98):DIFF[ex.l]}
+function exFlagged(ex){return!!(MODEL&&Array.isArray(MODEL.flagged)&&MODEL.flagged.includes(ex.id))}
+function patPrior(p){const v=MODEL&&MODEL.patternPrior&&MODEL.patternPrior[p];return Number.isFinite(v)?clamp(v,0.03,0.6):0.15}
+
+/* ============================== RESEARCH DATA (opt-in) ==============================
+   Solo funciona si js/config.js define EG_CONFIG.sheetsEndpoint (URL del Apps Script)
+   y la persona aceptó participar. Nunca se envía el texto de lo que escribes. */
+const CONFIG=(typeof window!=="undefined"&&window.EG_CONFIG)||{};
+const APP_VERSION="1.2.0";
+const RQ_KEY="english-gym-research-queue";
+let rq=lsGet(RQ_KEY)||[],rflushing=false;
+function researchAvailable(){return typeof CONFIG.sheetsEndpoint==="string"&&/^https:\/\/script\.google\.com\//.test(CONFIG.sheetsEndpoint)}
+function researchOn(){return researchAvailable()&&!!(state.research&&state.research.consent===true)}
+function anonId(){if(!state.anon){const a=new Uint8Array(9);try{crypto.getRandomValues(a)}catch(e){for(let i=0;i<9;i++)a[i]=Math.floor(Math.random()*256)}state.anon="u-"+Array.from(a,b=>(b%36).toString(36)).join("");save()}return state.anon}
+function deviceKind(){const ua=navigator.userAgent||"";if(/iPad/.test(ua)||(/Macintosh/.test(ua)&&navigator.maxTouchPoints>1))return"ipad";if(/iPhone|Android.+Mobile/.test(ua))return"phone";if(/Android|Tablet/.test(ua))return"tablet";return"desktop"}
+function track(type,data,opt={}){
+  if(!researchAvailable())return;
+  if(!opt.force&&!researchOn())return;
+  rq.push(Object.assign({t:type,ts:new Date().toISOString(),d:today()},data||{}));
+  if(rq.length>3000)rq=rq.slice(-3000);
+  lsSet(RQ_KEY,rq);
+  if(opt.now||rq.length>=40)flushResearch();
+}
+async function flushResearch(beacon){
+  if(!researchAvailable()||!rq.length||rflushing)return;
+  rflushing=true;
+  const batch=rq.slice(0,250);
+  const body=JSON.stringify({v:1,app:APP_VERSION,anon:anonId(),alias:(state.research&&state.research.alias)||"",device:deviceKind(),rows:batch});
+  let ok=false;
+  try{
+    if(beacon&&navigator.sendBeacon)ok=navigator.sendBeacon(CONFIG.sheetsEndpoint,new Blob([body],{type:"text/plain;charset=utf-8"}));
+    else{await fetch(CONFIG.sheetsEndpoint,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body,keepalive:body.length<60000});ok=true}
+  }catch(e){ok=false}
+  if(ok){rq=rq.slice(batch.length);lsSet(RQ_KEY,rq);if(state.research){state.research.sent=(state.research.sent||0)+batch.length;state.research.lastSent=Date.now()}}
+  rflushing=false;
+  if(ok&&rq.length&&!beacon)setTimeout(()=>flushResearch(),1500);
+}
+setInterval(()=>flushResearch(),60000);
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden"){trackDaily();flushResearch(true)}});
+window.addEventListener("pagehide",()=>flushResearch(true));
+
+function streaks(){
+  const set=new Set(state.days);let cur=0,d=today();
+  if(!set.has(d))d=addDays(d,-1);
+  while(set.has(d)){cur++;d=addDays(d,-1)}
+  const sorted=[...set].sort();let best=0,run=0,prev=null;
+  for(const x of sorted){run=prev&&daysBetween(prev,x)===1?run+1:1;best=Math.max(best,run);prev=x}
+  return{cur,best};
+}
+function trackDaily(){
+  if(!researchOn()||!state.placed)return;
+  const t=today(),S=state.sessions.filter(s=>s.d===t),st=streaks();
+  const n=S.reduce((a,s)=>a+s.n,0),ok=S.reduce((a,s)=>a+s.ok,0);
+  const ws={new:0,learning:0,known:0,active:0};allWords().forEach(w=>ws[wordStatus(w.id).k]++);
+  const r={timer_secs:(state.time||{})[t]||0,active_secs:(state.active||{})[t]||0,sessions:S.length,attempts_first:n,correct_first:ok,
+    accuracy:n?+(ok/n).toFixed(3):"",skill:+state.skill.toFixed(1),cefr:cefr(state.skill),streak:st.cur,best_streak:st.best,days_total:state.days.length,
+    plan_done:!!(state.plan&&state.plan.d===t&&state.plan.done),wotd_done:!!(state.wotd&&state.wotd.d===t&&state.wotd.done),
+    words_new:ws.new,words_learning:ws.learning,words_known:ws.known,words_active:ws.active,wb_reps_done:(state.wbDay&&state.wbDay.d===t)?state.wbDay.done.length:0,
+    spell_due:spellDue().length,spell_total:Object.keys(state.spell||{}).length,texts_today:texts.filter(x=>x.d===t).length,texts_total:texts.length,xp:state.xp};
+  const key=JSON.stringify(r);if(state.research.lastDaily===t+key)return;
+  state.research.lastDaily=t+key;track("daily",r);
+}
+function trackProfile(){
+  const R=state.research||{};
+  track("profile",{start_level:state.startLevel||"",cefr:cefr(state.skill),skill:+state.skill.toFixed(1),occupation:R.occupation||"",goal:R.goal||"",
+    plan_minutes:R.planMinutes||"",years_english:R.years||"",self_level:R.selfLevel||"",native:R.native||"",lang_setting:state.lang,
+    tz:(Intl.DateTimeFormat().resolvedOptions().timeZone||""),screen:`${screen.width}x${screen.height}`,consent_date:R.consentDate||""},{now:true});
+}
+
+/* ---------- UI: consentimiento, perfil, retroalimentación ---------- */
+let researchUI={err:"",confirmDelete:false},fbUI={rating:0,cat:"",sent:false,err:""};
+const OCC=[["","Elige…"],["uni","Estudiante universitario"],["posgrado","Posgrado"],["prepa","Preparatoria"],["trabajo","Trabajo"],["otro","Otro"]];
+const GOALS=[["","Elige…"],["examen","Aprobar un examen (TOEFL, IELTS…)"],["estudiar","Estudiar en el extranjero"],["trabajo","Usarlo en el trabajo"],["conversar","Conversar con más confianza"],["escribir","Escribir mejor"],["otro","Otro"]];
+const MINS=[["","Elige…"],["10","10 min"],["20","20 min"],["30","30 min"],["45","45 min o más"]];
+const YEARS=[["","Elige…"],["<2","Menos de 2"],["2-5","2 a 5"],["5-10","5 a 10"],[">10","Más de 10"]];
+const SELF=[["","Elige…"],["B1","B1"],["B2","B2"],["C1","C1"],["C2","C2"],["ns","No sé"]];
+const opts=(arr,v)=>arr.map(([k,n])=>`<option value="${esc(k)}" ${k===v?"selected":""}>${esc(n)}</option>`).join("");
+function consentCardHTML(){
+  if(!researchAvailable()||!state.placed||state.research)return"";
+  return`<div class="card stack" style="gap:10px;border-color:var(--accent)">
+  <span class="eyebrow" style="color:var(--accent)">Ayuda a mejorar English Gym</span>
+  <p style="max-width:66ch">¿Quieres compartir datos anónimos de cómo practicas? Con ellos entrenamos un modelo que decide mejor cuándo repasar cada cosa y qué ejercicios funcionan. Nunca se envía lo que escribes.</p>
+  <div class="row"><button class="btn primary" data-act="go" data-v="research">Ver detalles y participar</button><button class="btn ghost sm" data-act="research-later">Ahora no</button></div></div>`;
+}
+function vResearch(){
+  const R=state.research||{},on=researchOn();
+  return`<section class="stack" style="padding-top:18px;max-width:760px">
+  <div class="stack" style="gap:6px"><span class="eyebrow">Datos anónimos para mejorar la app</span><h1>Research</h1></div>
+  <div class="card stack" style="gap:10px"><span class="eyebrow">Qué se comparte</span>
+    <ul class="plain">
+      <li>Cada respuesta a un ejercicio: cuál era, si acertaste, si fue repetición, si usaste pista u opciones, cuánto tardaste y cuántos días pasaron desde la última vez que lo viste.</li>
+      <li>Resumen diario: minutos del cronómetro, tiempo activo en la app, sesiones, precisión, racha y avance del Word Bank.</li>
+      <li>De tus textos, solo métricas: número de palabras, nota estimada, errores detectados y si fue escrito o dictado. <b>Nunca el texto.</b></li>
+      <li>Tus respuestas al perfil de abajo, el tipo de dispositivo y tu retroalimentación.</li>
+    </ul>
+    <span class="eyebrow">Qué no se comparte</span>
+    <ul class="plain"><li>Tu nombre, correo o ubicación. Te identifica un código al azar: <span class="mono">${esc(anonId())}</span>.</li><li>Lo que escribes o dictas.</li></ul>
+    <p class="muted" style="font-size:.88rem">Los datos van a una hoja de cálculo privada de quien mantiene el proyecto y se usan solo para mejorar English Gym y validar proyectos de aprendizaje. Puedes dejar de participar o pedir que se borren tus datos cuando quieras desde esta página.</p></div>
+  <form class="card stack" style="gap:12px" data-form="research">
+    <span class="eyebrow">Tu perfil (opcional)</span>
+    <div class="grid2">
+      <div class="stack" style="gap:4px"><label for="rs-alias">Apodo para reconocerte</label><input type="text" id="rs-alias" maxlength="24" value="${esc(R.alias||"")}" placeholder="ej. sil_98 (no tu nombre completo)"></div>
+      <div class="stack" style="gap:4px"><label for="rs-occ">Ocupación</label><select id="rs-occ">${opts(OCC,R.occupation||"")}</select></div>
+      <div class="stack" style="gap:4px"><label for="rs-goal">Objetivo principal</label><select id="rs-goal">${opts(GOALS,R.goal||"")}</select></div>
+      <div class="stack" style="gap:4px"><label for="rs-min">¿Cuánto quieres estudiar al día?</label><select id="rs-min">${opts(MINS,R.planMinutes||"")}</select></div>
+      <div class="stack" style="gap:4px"><label for="rs-years">Años estudiando inglés</label><select id="rs-years">${opts(YEARS,R.years||"")}</select></div>
+      <div class="stack" style="gap:4px"><label for="rs-self">¿Qué nivel crees que tienes?</label><select id="rs-self">${opts(SELF,R.selfLevel||"")}</select></div>
+    </div>
+    ${on?"":`<label class="check" style="align-items:flex-start;gap:10px;cursor:pointer"><input type="checkbox" id="rs-ok" style="width:20px;height:20px;margin-top:2px"><span>Tengo 18 años o más y acepto compartir estos datos anónimos para mejorar English Gym.</span></label>`}
+    ${researchUI.err?`<p style="color:var(--bad);font-size:.9rem">${esc(researchUI.err)}</p>`:""}
+    <div class="row"><button class="btn primary" type="submit">${on?"Guardar perfil":"Participar"}</button>${on?"":`<button class="btn ghost sm" type="button" data-act="research-later">Ahora no</button>`}</div>
+  </form>
+  ${on?`<div class="card stack" style="gap:10px"><span class="eyebrow">Estado</span>
+    <p>Participas desde ${esc(R.consentDate||"")}. Registros enviados: <b class="mono">${R.sent||0}</b> · en espera: <b class="mono">${rq.length}</b>.</p>
+    <div class="row"><button class="btn sm" data-act="research-flush">Enviar ahora</button><button class="btn ghost sm" data-act="research-stop">Dejar de participar</button>
+    ${researchUI.confirmDelete?"":`<button class="btn ghost sm" data-act="research-delete" style="color:var(--bad)">Borrar mis datos del estudio</button>`}</div>
+    ${researchUI.confirmDelete?`<div class="confirm"><b>¿Borrar todos tus datos de la hoja del estudio?</b><span>Se eliminan las filas con tu código ${esc(anonId())} y dejas de participar. Tu progreso en la app no cambia.</span><div class="row"><button class="btn sm" data-act="research-delete-yes" style="color:var(--bad);border-color:var(--bad)">Sí, borrar</button><button class="btn sm" data-act="research-delete-no">Cancelar</button></div></div>`:""}</div>`:""}
+  </section>`;
+}
+function saveResearchForm(){
+  const v=id=>{const el=$("#"+id);return el?String(el.value||"").trim():""};
+  const wasOn=researchOn();
+  if(!wasOn){const c=$("#rs-ok");if(!c||!c.checked){researchUI.err="Para participar confirma que tienes 18 años o más y que aceptas compartir los datos.";render();return}}
+  const alias=v("rs-alias").replace(/[^\w.\- áéíóúñÁÉÍÓÚÑ]/g,"").slice(0,24);
+  state.research=Object.assign(state.research||{},{consent:true,consentDate:(state.research&&state.research.consentDate)||today(),alias,occupation:v("rs-occ"),goal:v("rs-goal"),planMinutes:v("rs-min"),years:v("rs-years"),selfLevel:v("rs-self")});
+  researchUI.err="";anonId();save();trackProfile();trackDaily();
+  toast(wasOn?"Perfil actualizado":"¡Gracias por participar!");view=wasOn?"research":"home";render();
+}
+function feedbackLink(){return researchAvailable()?`<button class="btn ghost sm" data-act="go" data-v="feedback">Enviar una idea o recomendación</button>`:""}
+function vFeedback(){
+  if(fbUI.sent)return`<section class="stack" style="padding-top:18px;max-width:720px"><h1>Thank you!</h1><p>Recibimos tu retroalimentación. Cada idea se revisa para la siguiente versión.</p><div class="row"><button class="btn primary" data-act="fb-again">Enviar otra</button><button class="btn ghost sm" data-act="go" data-v="home">Volver a Hoy</button></div></section>`;
+  const cats=[["idea","Idea nueva"],["confuso","Algo confuso"],["error","Un error"],["contenido","Ejercicio o palabra"],["otro","Otro"]];
+  return`<section class="stack" style="padding-top:18px;max-width:720px">
+  <div class="stack" style="gap:6px"><span class="eyebrow">Tu opinión cambia la siguiente versión</span><h1>Feedback</h1></div>
+  <form class="card stack" style="gap:14px" data-form="feedback">
+    <div class="stack" style="gap:6px"><span class="lbl eyebrow">¿Qué tan útil te está siendo English Gym?</span>
+      <div class="row" style="gap:6px">${[1,2,3,4,5].map(n=>`<button type="button" class="btn sm ${fbUI.rating===n?"primary":""}" data-act="fb-rate" data-n="${n}" aria-pressed="${fbUI.rating===n}">${n}</button>`).join("")}<span class="muted" style="font-size:.85rem">1 = nada · 5 = mucho</span></div></div>
+    <div class="stack" style="gap:6px"><span class="lbl eyebrow">Tipo</span><div class="row" style="gap:6px">${cats.map(([k,n])=>`<button type="button" class="btn sm ${fbUI.cat===k?"primary":""}" data-act="fb-cat" data-c="${k}" aria-pressed="${fbUI.cat===k}">${n}</button>`).join("")}</div></div>
+    <div class="stack" style="gap:4px"><label for="fb-helped">¿Qué te está ayudando a aprender?</label><textarea id="fb-helped" rows="2" maxlength="1000"></textarea></div>
+    <div class="stack" style="gap:4px"><label for="fb-frustr">¿Qué te frustra o te confunde?</label><textarea id="fb-frustr" rows="2" maxlength="1000"></textarea></div>
+    <div class="stack" style="gap:4px"><label for="fb-idea">Idea o recomendación</label><textarea id="fb-idea" rows="3" maxlength="1500"></textarea></div>
+    ${fbUI.err?`<p style="color:var(--bad);font-size:.9rem">${esc(fbUI.err)}</p>`:""}
+    <p class="muted" style="font-size:.85rem">Se envía con tu código anónimo${state.research&&state.research.alias?` y tu apodo (${esc(state.research.alias)})`:""}. No escribas datos personales.</p>
+    <div><button class="btn primary" type="submit">Enviar</button></div>
+  </form></section>`;
+}
+function sendFeedback(){
+  const v=id=>{const el=$("#"+id);return el?String(el.value||"").trim().slice(0,1500):""};
+  const d={rating:fbUI.rating||"",category:fbUI.cat||"",helped:v("fb-helped"),frustrated:v("fb-frustr"),idea:v("fb-idea"),cefr:cefr(state.skill),sessions:state.sessions.length,days:state.days.length};
+  if(!d.rating&&!d.helped&&!d.frustrated&&!d.idea){fbUI.err="Escribe algo o elige una calificación.";render();return}
+  track("feedback",d,{force:true,now:true});fbUI={rating:0,cat:"",sent:true,err:""};render();
+}
+
 /* ============================== EVENTS ============================== */
 document.addEventListener("click",async ev=>{
   const b=ev.target.closest("[data-act]");if(!b||b.disabled)return;
@@ -1495,6 +1677,17 @@ document.addEventListener("click",async ev=>{
     case"dontknow":{const ex=curEx();if(ex.t==="mc"||ex.t==="scenario")settle(ex,false,"(no lo sé)",{dk:true,choice:-1});else settle(ex,false,"(no lo sé)",{dk:true});break}
     case"self":{const ex=curEx();const ok=b.dataset.v==="1";settle(ex,ok,sess.fb.ans,{kind:ex.k||"g"});break}
     case"next":nextItem();break;
+    case"timer-toggle":toggleTimer();break;
+    case"research-later":state.research={consent:false,asked:today()};save();view="home";render();break;
+    case"research-flush":{const before=rq.length;await flushResearch();toast(before?"Datos enviados":"No hay datos pendientes");render();break}
+    case"research-stop":{state.research.consent=false;state.research.stopped=today();rq=[];lsSet(RQ_KEY,rq);save();toast("Dejaste de participar");render();break}
+    case"research-delete":researchUI.confirmDelete=true;render();break;
+    case"research-delete-no":researchUI.confirmDelete=false;render();break;
+    case"research-delete-yes":{rq=[];track("delete",{},{force:true});await flushResearch();state.research={consent:false,deleted:today()};researchUI.confirmDelete=false;save();toast("Pedimos borrar tus datos del estudio");render();break}
+    case"fb-rate":fbUI.rating=+b.dataset.n;render();break;
+    case"fb-cat":fbUI.cat=fbUI.cat===b.dataset.c?"":b.dataset.c;render();break;
+    case"fb-again":fbUI={rating:0,cat:"",sent:false,err:""};render();break;
+
     case"reps-start":startReps();break;
     case"wb-start":startWbReps();break;
     case"wb-next":wbUI.phase="ask";wbUI.last=null;render();break;
@@ -1506,10 +1699,10 @@ document.addEventListener("click",async ev=>{
     case"reps-hide":repsUI.phase="write";repsUI.last=null;render();break;
     case"reps-next":{const R=repsUI;R.i++;R.phase="look";R.streak=0;R.last=null;render();window.scrollTo({top:0});break}
     case"reps-exit":repsUI=null;render();window.scrollTo({top:0});break;
-    case"show-choices":sess.choice=true;render();break;
+    case"show-choices":sess.choice=true;sess.usedChoices=true;render();break;
     case"hide-choices":sess.choice=false;render();break;
     case"answer-ch":{const ex=curEx();const k=+b.dataset.k;settle(ex,k===0,ex.ch[k],{assist:true,kind:ex.k||"n"});break}
-    case"intro-done":{sess.intro=null;if(state.wotd)state.wotd.seen=true;save();render();window.scrollTo({top:0});break}
+    case"intro-done":{sess.intro=null;sess.shownAt=Date.now();if(state.wotd)state.wotd.seen=true;save();render();window.scrollTo({top:0});break}
     case"tile-pick":{const T=sess.tiles;const k=T.pool.splice(+b.dataset.pos,1)[0];T.ans.push(k);render();break}
     case"tile-back":{const T=sess.tiles;const k=T.ans.splice(+b.dataset.pos,1)[0];T.pool.push(k);render();break}
     case"tile-reset":{const T=sess.tiles;T.pool=T.pool.concat(T.ans);T.ans=[];render();break}
@@ -1540,13 +1733,16 @@ document.addEventListener("click",async ev=>{
     case"redo-placement":place={i:0,ans:[],done:false};render();break;
     case"reset":reviewUI.confirmReset=true;render();break;
     case"reset-no":reviewUI.confirmReset=false;render();break;
-    case"reset-yes":{state=fresh();indexBank();reviewUI.confirmReset=false;view="onboard";save();render();break}
+    case"reset-yes":{const keep={anon:state.anon,research:state.research};state=fresh();Object.assign(state,keep);indexBank();reviewUI.confirmReset=false;view="onboard";save();render();break}
   }
 });
+document.addEventListener("toggle",ev=>{const t=ev.target;if(sess&&!sess.fb&&t&&t.tagName==="DETAILS"&&t.open&&!t.classList.contains("why"))sess.hintUsed=true},true);
 document.addEventListener("submit",ev=>{ev.preventDefault();const f=ev.target.dataset.form;
   if(f==="fill"&&sess&&!sess.fb)checkFree();
   if(f==="rep"&&repsUI&&repsUI.phase==="write")repsCheck();
   if(f==="wb"&&wbUI&&wbUI.phase==="ask")wbCheck();
+  if(f==="research")saveResearchForm();
+  if(f==="feedback")sendFeedback();
   if(f==="spell-add"){const el=$("#sp-add");const w=lo((el&&el.value)||"").trim();if(!/^[a-z][a-z'’-]*$/.test(w)){toast("Escribe una sola palabra en inglés");return}
     if(DICT.st==="ready"&&!known(w)){toast("“"+w+"” no está en el diccionario. Revisa cómo se escribe.");return}
     addSpellRep(null,w,"manual");save();toast("Agregada a tus reps de ortografía");render()}});
