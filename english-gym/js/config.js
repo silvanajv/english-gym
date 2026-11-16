@@ -6,5 +6,5 @@
  * ni con el formulario de retroalimentación. Ver docs/DATOS.md.
  */
 window.EG_CONFIG = {
-  sheetsEndpoint: ""
+  sheetsEndpoint: "https://script.google.com/macros/s/AKfycbxp3vHJ35caEO7VtwrbBzUdhMN8P6H-5RO1IbLBknnVni-YuWxmOPH25Tq_hfwmg6Ux/exec"
 };
